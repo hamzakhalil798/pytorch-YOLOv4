@@ -344,7 +344,7 @@ class Yolov4Head(nn.Module):
         self.conv8 = Conv_Bn_Activation(512, 256, 1, 1, 'leaky')
         self.conv9 = Conv_Bn_Activation(256, 512, 3, 1, 'leaky')
         self.conv10 = Conv_Bn_Activation(512, output_ch, 1, 1, 'linear', bn=False, bias=True)
-        
+
         self.yolo2 = YoloLayer(
                                 anchor_mask=[3, 4, 5], num_classes=n_classes,
                                 anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
@@ -361,7 +361,7 @@ class Yolov4Head(nn.Module):
         self.conv16 = Conv_Bn_Activation(1024, 512, 1, 1, 'leaky')
         self.conv17 = Conv_Bn_Activation(512, 1024, 3, 1, 'leaky')
         self.conv18 = Conv_Bn_Activation(1024, output_ch, 1, 1, 'linear', bn=False, bias=True)
-        
+
         self.yolo3 = YoloLayer(
                                 anchor_mask=[6, 7, 8], num_classes=n_classes,
                                 anchors=[12, 16, 19, 36, 40, 28, 36, 75, 76, 55, 72, 146, 142, 110, 192, 243, 459, 401],
@@ -394,14 +394,14 @@ class Yolov4Head(nn.Module):
         x16 = self.conv16(x15)
         x17 = self.conv17(x16)
         x18 = self.conv18(x17)
-        
+
         if self.inference:
             y1 = self.yolo1(x2)
             y2 = self.yolo2(x10)
             y3 = self.yolo3(x18)
 
             return get_region_boxes([y1, y2, y3])
-        
+
         else:
             return [x2, x10, x18]
 
@@ -431,7 +431,7 @@ class Yolov4(nn.Module):
             # 2. overwrite entries in the existing state dict
             model_dict.update(pretrained_dict)
             _model.load_state_dict(model_dict)
-        
+
         # head
         self.head = Yolov4Head(output_ch, n_classes, inference)
 
@@ -453,57 +453,138 @@ if __name__ == "__main__":
     import sys
     import cv2
 
-    namesfile = None
-    if len(sys.argv) == 6:
-        n_classes = int(sys.argv[1])
-        weightfile = sys.argv[2]
-        imgfile = sys.argv[3]
-        height = int(sys.argv[4])
-        width = int(sys.argv[5])
-    elif len(sys.argv) == 7:
-        n_classes = int(sys.argv[1])
-        weightfile = sys.argv[2]
-        imgfile = sys.argv[3]
-        height = int(sys.argv[4])
-        width = int(sys.argv[5])
-        namesfile = sys.argv[6]
-    else:
-        print('Usage: ')
-        print('  python models.py num_classes weightfile imgfile namefile')
+    # namesfile = None
+    # if len(sys.argv) == 6:
+    #     n_classes = int(sys.argv[1])
+    #     weightfile = sys.argv[2]
+    #     imgfile = sys.argv[3]
+    #     height = int(sys.argv[4])
+    #     width = int(sys.argv[5])
+    # elif len(sys.argv) == 7:
+    #     n_classes = int(sys.argv[1])
+    #     weightfile = sys.argv[2]
+    #     imgfile = sys.argv[3]
+    #     height = int(sys.argv[4])
+    #     width = int(sys.argv[5])
+    #     namesfile = sys.argv[6]
+    # else:
+    #     print('Usage: ')
+    #     print('  python models.py num_classes weightfile imgfile namefile')
 
-    model = Yolov4(yolov4conv137weight=None, n_classes=n_classes, inference=True)
+    # model = Yolov4(yolov4conv137weight=None, n_classes=80, inference=True)
 
-    pretrained_dict = torch.load(weightfile, map_location=torch.device('cuda'))
-    model.load_state_dict(pretrained_dict)
+    # pretrained_dict = torch.load('/content/pytorch-YOLOv4/yolov4_orig.pth', map_location=torch.device('cuda'))
+    # model.load_state_dict(pretrained_dict,strict=False)
+
+    from tool import darknet2pytorch
+    import torch
+
+    # load weights from darknet format
+    model = darknet2pytorch.Darknet('/content/drive/MyDrive/snipBack/yolov4-basketball.cfg', inference=True)
+    model.load_weights('/content/drive/MyDrive/snipBack/yolov4-basketball.weights')
+
+    # save weights to pytorch format
+    torch.save(model.state_dict(), 'yolov4_orig.pth')
+
+    # # reload weights from pytorch format
+    model = darknet2pytorch.Darknet('/content/drive/MyDrive/snipBack/yolov4-basketball.cfg', inference=True)
+    model.load_state_dict(torch.load('/content/pytorch-YOLOv4/yolov4_orig.pth'))
+
+
+
 
     use_cuda = True
     if use_cuda:
         model.cuda()
 
-    img = cv2.imread(imgfile)
-
-    # Inference input size is 416*416 does not mean training size is the same
-    # Training size could be 608*608 or even other sizes
-    # Optional inference sizes:
-    #   Hight in {320, 416, 512, 608, ... 320 + 96 * n}
-    #   Width in {320, 416, 512, 608, ... 320 + 96 * m}
-    sized = cv2.resize(img, (width, height))
-    sized = cv2.cvtColor(sized, cv2.COLOR_BGR2RGB)
-
+    import cv2
+    import pickle
     from tool.utils import load_class_names, plot_boxes_cv2
     from tool.torch_utils import do_detect
 
-    for i in range(2):  # This 'for' loop is for speed check
-                        # Because the first iteration is usually longer
-        boxes = do_detect(model, sized, 0.4, 0.6, use_cuda)
+    # Constants
+    FRAME_STEP = 5  # Perform inference on every 5th frame
 
-    if namesfile == None:
-        if n_classes == 20:
-            namesfile = 'data/voc.names'
-        elif n_classes == 80:
-            namesfile = 'data/coco.names'
-        else:
-            print("please give namefile")
+    # Set up video capture
+    video_path = '/content/drive/MyDrive/videos.mp4'  # Update with your video path
+    output_path = 'output_video.mp4'
+    capture = cv2.VideoCapture(video_path)
 
-    class_names = load_class_names(namesfile)
-    plot_boxes_cv2(img, boxes[0], 'predictions.jpg', class_names)
+    # Initialize video writer for saving output video
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec
+    fps = int(capture.get(cv2.CAP_PROP_FPS))
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+    print(total_frames)
+    print(fps)
+    frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    video_writer = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
+    frame_results_list = []  # List to store results for all frames
+    frame_idx = 0  # To track frame index
+
+    while capture.isOpened():
+        ret, frame = capture.read()
+        if not ret:
+            break
+
+        frame_idx += 1    
+        print(frame_idx)
+        # Skip frames based on FRAME_STEP
+        if frame_idx % FRAME_STEP != 0:
+            frame_results_list.append([])  # Append empty list for skipped frames
+          
+            continue
+
+        # Preprocess the frame
+        sized = cv2.resize(frame, (1920, 1088))
+        sized = cv2.cvtColor(sized, cv2.COLOR_BGR2RGB)
+
+        # Perform detection
+        boxes = do_detect(model, sized, 0.5, 0.5, use_cuda)
+        preds = boxes[0]
+        frame_results = []
+
+        for i in range(len(preds)):
+            box = preds[i]
+            NewBox = []
+            x1 = int(box[0] * frame.shape[1])
+            y1 = int(box[1] * frame.shape[0])
+            x2 = int(box[2] * frame.shape[1])
+            y2 = int(box[3] * frame.shape[0])
+            NewBox.append(x1)
+            NewBox.append(y1)
+            NewBox.append(x2)
+            NewBox.append(y2)
+            NewBox.append(box[4])
+            NewBox.append(box[6])
+
+            # Save the updated box
+            preds[i] = NewBox
+            print(NewBox)
+            frame_results.append(NewBox)
+
+        # Append the results of this frame to the main list
+        frame_results_list.append(frame_results)
+
+        # Draw bounding boxes on the frame
+        for box in preds:
+            x1, y1, x2, y2, confidence, class_id = map(int, box[:6])
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            label = f"Class {class_id}: {confidence:.2f}"
+            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        # Write the frame to the output video
+        video_writer.write(frame)
+        # frame_idx += 1
+
+    # Release resources
+    capture.release()
+    video_writer.release()
+
+    # Save results to a pickle file
+    with open('detection_results.pkl', 'wb') as f:
+        pickle.dump(frame_results_list, f)
+
+    print("Inference completed. Results saved in 'detection_results.pkl' and video saved in", output_path)
+
