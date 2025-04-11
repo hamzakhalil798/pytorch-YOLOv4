@@ -14,6 +14,16 @@ from tool.torch_utils import do_detect
 model = darknet2pytorch.Darknet('/content/drive/MyDrive/snipBack/yolov4-basketball.cfg', inference=True)
 model.load_weights('/content/drive/MyDrive/snipBack/yolov4-basketball.weights')
 
+
+# Dummy input matching the model's expected input
+dummy_input = torch.randn(1, 3, model.width, model.height)  # Usually 416x416
+
+# Trace the model
+traced_script_module = torch.jit.trace(model, dummy_input)
+
+# Save TorchScript model
+traced_script_module.save("yolov4_basketball_traced.pt")
+
 # save weights to pytorch format
 torch.save(model.state_dict(), 'yolov4_orig.pth')
 
